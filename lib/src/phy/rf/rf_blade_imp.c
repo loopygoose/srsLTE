@@ -221,6 +221,8 @@ int rf_blade_open(char *args, void **h)
   }
   handler->rx_stream_enabled = false; 
   handler->tx_stream_enabled = false; 
+
+  bladerf_set_vctcxo_tamer_mode(handler->dev, BLADERF_VCTCXO_TAMER_10_MHZ);
   return 0;
 }
 
