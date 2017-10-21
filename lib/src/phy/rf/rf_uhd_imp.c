@@ -336,6 +336,7 @@ int rf_uhd_open_multi(char *args, void **h, uint32_t nof_channels)
     // Check external clock argument
     enum {DEFAULT, EXTERNAL, GPSDO} clock_src;
     if (strstr(args, "clock=external")) {
+      printf("Using EXTERNAL clock\n");
       remove_substring(args, "clock=external");
       clock_src = EXTERNAL;
     } else if (strstr(args, "clock=gpsdo")) {

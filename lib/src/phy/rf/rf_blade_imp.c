@@ -195,7 +195,7 @@ int rf_blade_open(char *args, void **h)
   *h = handler; 
 
   printf("Opening bladeRF...\n");
-  int status = bladerf_open(&handler->dev, args);
+  int status = bladerf_open(&handler->dev, NULL);
   if (status) {
     fprintf(stderr, "Unable to open device: %s\n", bladerf_strerror(status));
     return status;
@@ -222,7 +222,23 @@ int rf_blade_open(char *args, void **h)
   handler->rx_stream_enabled = false; 
   handler->tx_stream_enabled = false; 
 
-  bladerf_set_vctcxo_tamer_mode(handler->dev, BLADERF_VCTCXO_TAMER_10_MHZ);
+  if(strstr(args, "clock=tamer"))
+  {
+		printf("Using TAMER=10MHz input on mini-Header\n");
+		bladerf_set_vctcxo_tamer_mode(handler->dev, BLADERF_VCTCXO_TAMER_10_MHZ);
+  }
+	
+	if (strstr(args, "clock=smbout"))
+  {
+	  printf("Outputting 38.4MHz on SMB port\n");
+		bladerf_set_smb_mode(handler->dev, BLADERF_SMB_MODE_OUTPUT);
+	}
+	else if (strstr(args, "clock=smbin"))
+  {
+	  printf("Inputting 38.4MHz on SMB port\n");
+		bladerf_set_smb_mode(handler->dev, BLADERF_SMB_MODE_INPUT);		
+	}
+	
   return 0;
 }
 
