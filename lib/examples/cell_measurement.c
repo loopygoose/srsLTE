@@ -55,7 +55,8 @@ typedef struct {
   int nof_subframes;
   bool disable_plots;
   int force_N_id_2;
-  char *rf_args; 
+  char *rf_args;
+  char * ref_sym_fname;
   float rf_freq; 
   float rf_gain;
 }prog_args_t;
@@ -65,6 +66,7 @@ void args_default(prog_args_t *args) {
   args->force_N_id_2 = -1; // Pick the best
   args->rf_args = "";
   args->rf_freq = -1.0;
+	args->ref_sym_fname = "";
 #ifdef ENABLE_AGC_DEFAULT
   args->rf_gain = -1; 
 #else
@@ -84,7 +86,7 @@ void usage(prog_args_t *args, char *prog) {
 int  parse_args(prog_args_t *args, int argc, char **argv) {
   int opt;
   args_default(args);
-  while ((opt = getopt(argc, argv, "aglnvf")) != -1) {
+  while ((opt = getopt(argc, argv, "aglnvrf")) != -1) {
     switch (opt) {
     case 'a':
       args->rf_args = argv[optind];
@@ -97,6 +99,9 @@ int  parse_args(prog_args_t *args, int argc, char **argv) {
       break;
     case 'n':
       args->nof_subframes = atoi(argv[optind]);
+			break;
+    case 'r':
+      args->ref_sym_fname = argv[optind];
       break;
     case 'l':
       args->force_N_id_2 = atoi(argv[optind]);
@@ -162,9 +167,17 @@ int main(int argc, char **argv) {
   cf_t *ce[SRSLTE_MAX_PORTS];
   float cfo = 0;
   bool acks[SRSLTE_MAX_CODEWORDS] = {false};
-
+  FILE * crs = NULL;
+	
   if (parse_args(&prog_args, argc, argv)) {
     exit(-1);
+  }
+
+  if(prog_args.ref_sym_fname)
+  {
+    crs = fopen(prog_args.ref_sym_fname, "w");
+    if (crs)
+      printf("Writing CRS to %s\n", prog_args.ref_sym_fname);
   }
 
   printf("Opening RF device...\n");
@@ -349,7 +362,7 @@ int main(int argc, char **argv) {
         
       case MEASURE:
         
-        if (srslte_ue_sync_get_sfidx(&ue_sync) == 5) {
+        if (srslte_ue_sync_get_sfidx(&ue_sync) == 5 || (sfn%128) == 127) {
           /* Run FFT for all subframe data */
           srslte_ofdm_rx_sf(&fft, sf_buffer[0], sf_symbols);
           
@@ -362,8 +375,24 @@ int main(int argc, char **argv) {
           snr = SRSLTE_VEC_EMA(srslte_chest_dl_get_snr(&chest),snr,0.05);      
           
           nframes++;          
+
+          if (crs && ((sfn%128) == 127))
+          {
+            int qq = 0;
+            fprintf(crs, "[ID=%d SFN=%d SF=%d NPRB=%d Nports=%d CP=%d PHICHlen=%d PHICHres=%d]\n", 
+                      ue_sync.cell.id, sfn, srslte_ue_sync_get_sfidx(&ue_sync), 
+                      ue_sync.cell.nof_prb, ue_sync.cell.nof_ports, ue_sync.cell.cp, 
+                      ue_sync.cell.phich_length, ue_sync.cell.phich_resources);
+          
+            for(qq = 0; qq< 120; ++qq)
+            {
+              fprintf(crs, "%f, %f\n", crealf(chest.pilot_recv_signal[qq]), cimagf(chest.pilot_recv_signal[qq]));
+            }
+            fprintf(crs, "\n");
+          }
         } 
-        
+
+
         
         if ((nframes%100) == 0 || rx_gain_offset == 0) {
           if (srslte_rf_has_rssi(&rf)) {
@@ -410,6 +439,9 @@ int main(int argc, char **argv) {
       free(data[i]);
     }
   }
+
+  if(crs)
+    fclose(crs);
 
   srslte_ue_sync_free(&ue_sync);
   srslte_rf_close(&rf);

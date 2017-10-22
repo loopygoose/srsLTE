@@ -120,6 +120,7 @@ int srslte_chest_dl_init(srslte_chest_dl_t *q, uint32_t max_prb)
       goto clean_exit;
     }      
     q->pilot_recv_signal = srslte_vec_malloc(sizeof(cf_t) * pilot_vec_size);
+		printf("Allocated %d pilots for %d PRB\n", pilot_vec_size, max_prb);
 
     if (!q->pilot_recv_signal) {
       perror("malloc");
