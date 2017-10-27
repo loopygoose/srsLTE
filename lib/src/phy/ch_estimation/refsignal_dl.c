@@ -287,11 +287,14 @@ int srslte_refsignal_cs_set_cell(srslte_refsignal_t * q, srslte_cell_t cell)
 
             /* Compute signal */
             for (i = 0; i < 2*q->cell.nof_prb; i++) {
+              int iii = SRSLTE_REFSIGNAL_PILOT_IDX(i,(ns%2)*nsymbols+l,q->cell);
               mp = i + SRSLTE_MAX_PRB - cell.nof_prb;
               /* save signal */
-              q->pilots[p][ns/2][SRSLTE_REFSIGNAL_PILOT_IDX(i,(ns%2)*nsymbols+l,q->cell)] =
+              q->pilots[p][ns/2][iii] =
                 (1 - 2 * (float) seq.c[2 * mp]) / sqrt(2) +
                 _Complex_I * (1 - 2 * (float) seq.c[2 * mp + 1]) / sqrt(2);
+
+              printf("PRB=%d Ns=%d idx=%d Real=%f Imag=%f\n", i, ns, iii, crealf(q->pilots[p][ns/2][iii]), cimagf(q->pilots[p][ns/2][iii]));
             }
           }
         }
