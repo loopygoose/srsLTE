@@ -294,7 +294,7 @@ int srslte_refsignal_cs_set_cell(srslte_refsignal_t * q, srslte_cell_t cell)
                 (1 - 2 * (float) seq.c[2 * mp]) / sqrt(2) +
                 _Complex_I * (1 - 2 * (float) seq.c[2 * mp + 1]) / sqrt(2);
 
-              printf("Port=%d PRB=%d Ns=%d Sym=%d Real=%f Imag=%f\n", p, i, ns, l, crealf(q->pilots[p][ns/2][iii]), cimagf(q->pilots[p][ns/2][iii]));
+              //printf("mp=%d Port=%d PRB=%d Ns=%d Sym=%d Real=%f Imag=%f\n", mp, p, i, ns, l, crealf(q->pilots[p][ns/2][iii]), cimagf(q->pilots[p][ns/2][iii]));
             }
           }
         }
