@@ -408,6 +408,26 @@ void srslte_pss_synch_set_ema_alpha(srslte_pss_synch_t *q, float alpha) {
  *
  * Input buffer must be subframe_size long.
  */
+
+
+typedef struct TAG_PEAK_FINDER
+{
+  float peak;
+  uint32_t pos;
+} PEAK_FINDER;
+
+int comparePf (const void * a, const void * b)
+{
+  PEAK_FINDER * pa = (PEAK_FINDER*) a;
+  PEAK_FINDER * pb = (PEAK_FINDER*) b;
+
+  if ( pa->peak > pb->peak ) return -1;
+  if ( pa->peak < pb->peak ) return 1;
+
+  return 0;
+}
+
+
 int srslte_pss_synch_find_pss(srslte_pss_synch_t *q, cf_t *input, float *corr_peak_value) 
 {
   int ret = SRSLTE_ERROR_INVALID_INPUTS;
@@ -473,7 +493,30 @@ int srslte_pss_synch_find_pss(srslte_pss_synch_t *q, cf_t *input, float *corr_pe
     
     // save absolute value 
     q->peak_value = q->conv_output_avg[corr_peak_pos];
-    
+
+    {
+      int pk_i;
+      PEAK_FINDER* pf = malloc(conv_output_len * sizeof(PEAK_FINDER));
+
+      for (pk_i = 0; pk_i < conv_output_len; ++pk_i)
+      {
+        pf[pk_i].peak = q->conv_output_avg[pk_i] * 1000000;
+        pf[pk_i].pos = pk_i;
+      }
+
+      qsort(pf, conv_output_len, sizeof(PEAK_FINDER), comparePf);
+
+      /* Show first 10 peak pairs */
+
+      printf("N2=%d ", q->N_id_2);
+      for(pk_i = 0; pk_i <  20; ++pk_i)
+        printf("[%f %d] ", pf[pk_i].peak, pf[pk_i].pos);
+
+      printf("\n");
+      free(pf);
+    }
+
+
 #ifdef SRSLTE_PSS_RETURN_PSR    
     // Find second side lobe
     
@@ -504,7 +547,7 @@ int srslte_pss_synch_find_pss(srslte_pss_synch_t *q, cf_t *input, float *corr_pe
     float side_lobe_value = SRSLTE_MAX(q->conv_output_avg[sl_right], q->conv_output_avg[sl_left]);    
     if (corr_peak_value) {
       *corr_peak_value = q->conv_output_avg[corr_peak_pos]/side_lobe_value;
-      
+
       if (*corr_peak_value < 10)
         DEBUG("peak_pos=%2d, pl_ub=%2d, pl_lb=%2d, sl_right: %2d, sl_left: %2d, PSR: %.2f/%.2f=%.2f\n", corr_peak_pos, pl_ub, pl_lb, 
              sl_right,sl_left, q->conv_output_avg[corr_peak_pos], side_lobe_value,*corr_peak_value);
@@ -521,7 +564,6 @@ int srslte_pss_synch_find_pss(srslte_pss_synch_t *q, cf_t *input, float *corr_pe
         corr_peak_pos = corr_peak_pos - decimation_correction;
         corr_peak_pos = corr_peak_pos*q->decimate;
     }
-
 
     if (q->frame_size >= q->fft_size) {
       ret = (int) corr_peak_pos;                
