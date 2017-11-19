@@ -41,6 +41,8 @@
 #include "srslte/phy/rf/rf.h"
 #include "srslte/phy/rf/rf_utils.h"
 
+#include "srslte/asn1/liblte_rrc.h"
+
 cell_search_cfg_t cell_detect_config = {
   SRSLTE_DEFAULT_MAX_FRAMES_PBCH,
   SRSLTE_DEFAULT_MAX_FRAMES_PSS, 

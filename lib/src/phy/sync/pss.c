@@ -508,11 +508,13 @@ int srslte_pss_synch_find_pss(srslte_pss_synch_t *q, cf_t *input, float *corr_pe
 
       /* Show first 10 peak pairs */
 
+#if 0
       printf("N2=%d ", q->N_id_2);
       for(pk_i = 0; pk_i <  20; ++pk_i)
         printf("[%f %d] ", pf[pk_i].peak, pf[pk_i].pos);
 
       printf("\n");
+#endif
       free(pf);
     }
 
