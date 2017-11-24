@@ -54,7 +54,7 @@ cell_search_cfg_t cell_detect_config = {
 };
 
 
-static void cell_measurement_decode_sib(uint8_t * data, uint32_t n);
+static int cell_measurement_decode_sib(uint8_t * data, uint32_t n);
 static void cell_measurement_decode_sib1(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_1_STRUCT * sib1);
 static void cell_measurement_decode_sib2(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_2_STRUCT * sib2);
 
@@ -178,7 +178,7 @@ int main(int argc, char **argv) {
   float rssi_utra=0,rssi=0, rsrp=0, rsrq=0, snr=0;
   cf_t *ce[SRSLTE_MAX_PORTS];
   float cfo = 0;
-  bool acks[SRSLTE_MAX_CODEWORDS] = {false};
+  bool acks[SRSLTE_MAX_CODEWORDS] = {false, false};
   FILE * crs = NULL;
 	
   if (parse_args(&prog_args, argc, argv)) {
@@ -354,7 +354,13 @@ int main(int argc, char **argv) {
           break;
         case DECODE_SIB:
           /* We are looking for SI Blocks, search only in appropiate places */
-          if ((srslte_ue_sync_get_sfidx(&ue_sync) == 5 && (sfn%2)==0)) {
+          if (1){ //(srslte_ue_sync_get_sfidx(&ue_sync) == 5 && (sfn%2)==0)) {
+
+            memset(data[0], 0, 8 * 1500 * sizeof(uint8));
+            memset(data[1], 0, 8 * 1500 * sizeof(uint8));
+            acks[0] = false;
+            acks[1] = false;
+              
             n = srslte_ue_dl_decode(&ue_dl, sf_buffer, data, 0, sfn*10+srslte_ue_sync_get_sfidx(&ue_sync), acks);
             if (n < 0) {
               fprintf(stderr, "Error decoding UE DL\n");fflush(stdout);
@@ -365,17 +371,23 @@ int main(int argc, char **argv) {
                       (float) ue_dl.nof_detected/nof_trials);
               nof_trials++; 
             } else {
-              printf("Decoded SIB1. Payload: ");
-              srslte_vec_fprint_byte(stdout, data[0], n/8);;
-              state = MEASURE;
-              // Decode SIB1
-              cell_measurement_decode_sib(data[0], n);
+              
+              srslte_vec_fprint_byte(stdout, data[0], n/8);
+              
+              int sib_type =  cell_measurement_decode_sib(data[0], n);
+              static uint32 sibs_rxd = 0;
+              const uint32 sibs_rqd = (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_1) | (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_2);
+
+              if(sib_type != -1)
+                sibs_rxd |= (1 << sib_type);
+
+              if((sibs_rxd & sibs_rqd) == sibs_rqd)
+                state = MEASURE;
             }
           }
         break;
         
       case MEASURE:
-        
         if (srslte_ue_sync_get_sfidx(&ue_sync) == 5 || (sfn%128) == 127) {
           /* Run FFT for all subframe data */
           srslte_ofdm_rx_sf(&fft, sf_buffer[0], sf_symbols);
@@ -464,38 +476,54 @@ int main(int argc, char **argv) {
 }
 
 
-static void 
+static int 
 cell_measurement_decode_sib(uint8_t * data, uint32_t n)
 {
+  LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_ENUM sib_type = LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_ENUM(-1);
+
   printf("SI Decode, bits=%d\n", n);
   srslte::bit_buffer_t bit_buf;
   LIBLTE_RRC_BCCH_DLSCH_MSG_STRUCT dlsch_msg;
 
   srslte_bit_unpack_vector(data, bit_buf.msg, n);
   bit_buf.N_bits = n;
-  liblte_rrc_unpack_bcch_dlsch_msg((LIBLTE_BIT_MSG_STRUCT *) &bit_buf, &dlsch_msg);
 
-
-  for(uint32 i = 0; i < dlsch_msg.N_sibs; ++i)
+  LIBLTE_ERROR_ENUM e = liblte_rrc_unpack_bcch_dlsch_msg((LIBLTE_BIT_MSG_STRUCT *) &bit_buf, &dlsch_msg);
+  
+  if(e == LIBLTE_SUCCESS)
   {
-    switch(dlsch_msg.sibs[i].sib_type)
+    for(uint32 i = 0; i < dlsch_msg.N_sibs; ++i)
     {
-      case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_1:
-        cell_measurement_decode_sib1(&dlsch_msg.sibs[i].sib.sib1);
-        break;
-      case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_2:
-        cell_measurement_decode_sib2(&dlsch_msg.sibs[i].sib.sib2);
-        break;
-      default:
-        printf("ERROR: Unsupported SIB type %s\n", liblte_rrc_sib_type_text[dlsch_msg.sibs[0].sib_type]);
+      sib_type = dlsch_msg.sibs[i].sib_type;
+      
+      switch(sib_type)
+      {
+        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_1:
+          cell_measurement_decode_sib1(&dlsch_msg.sibs[i].sib.sib1);
+          break;
+        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_2:
+          cell_measurement_decode_sib2(&dlsch_msg.sibs[i].sib.sib2);
+          break;
+        default:
+          printf("ERROR: Unsupported SIB type %s\n", liblte_rrc_sib_type_text[sib_type]);
+      }
     }
   }
+  else
+  {
+    printf("Error Decoding SIB %d\n", e);
+    exit(1);
+  }
+  
+
+  return (int) sib_type;
 }
 
 
 static void
 cell_measurement_decode_sib1(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_1_STRUCT * sib1)
 {
+  printf("----------------------------------------------------------\n");
   printf("SIB1 received: \n");
 
   // PLMNs
@@ -534,12 +562,17 @@ cell_measurement_decode_sib1(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_1_STRUCT * sib
   printf("Intra-Freq Reselection: [%s]\n", liblte_rrc_intra_freq_reselection_text[sib1->intra_freq_reselection]);
   printf("SI Window Length: [%s]\n", liblte_rrc_si_window_length_text[sib1->si_window_length]);
   printf("CSG Indicator=%d, CSG Id=%d\n", sib1->csg_indication, sib1->csg_id);
+  printf("----------------------------------------------------------\n");
 }
 
 
 static void
 cell_measurement_decode_sib2(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_2_STRUCT * sib2)
 {
+  printf("----------------------------------------------------------\n");
   printf("SIB2 received: \n");
+
+  printf("RS Power=%ddBm\n", sib2->rr_config_common_sib.pdsch_cnfg.rs_power);
+  printf("----------------------------------------------------------\n");
 }
 
