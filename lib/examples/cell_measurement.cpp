@@ -55,6 +55,9 @@ cell_search_cfg_t cell_detect_config = {
 
 
 static void cell_measurement_decode_sib(uint8_t * data, uint32_t n);
+static void cell_measurement_decode_sib1(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_1_STRUCT * sib1);
+static void cell_measurement_decode_sib2(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_2_STRUCT * sib2);
+
 
 
 /**********************************************************************
@@ -365,10 +368,8 @@ int main(int argc, char **argv) {
               printf("Decoded SIB1. Payload: ");
               srslte_vec_fprint_byte(stdout, data[0], n/8);;
               state = MEASURE;
-
-			  // Decode SIB1
-
-			  cell_measurement_decode_sib(data[0], n);
+              // Decode SIB1
+              cell_measurement_decode_sib(data[0], n);
             }
           }
         break;
@@ -466,80 +467,79 @@ int main(int argc, char **argv) {
 static void 
 cell_measurement_decode_sib(uint8_t * data, uint32_t n)
 {
-	printf("SI Decode, bits=%d\n", n);
-	srslte::bit_buffer_t bit_buf;
-	LIBLTE_RRC_BCCH_DLSCH_MSG_STRUCT dlsch_msg;
-	
-	srslte_bit_unpack_vector(data, bit_buf.msg, n);
-	bit_buf.N_bits = n;
-	liblte_rrc_unpack_bcch_dlsch_msg((LIBLTE_BIT_MSG_STRUCT *) &bit_buf, &dlsch_msg);
+  printf("SI Decode, bits=%d\n", n);
+  srslte::bit_buffer_t bit_buf;
+  LIBLTE_RRC_BCCH_DLSCH_MSG_STRUCT dlsch_msg;
+
+  srslte_bit_unpack_vector(data, bit_buf.msg, n);
+  bit_buf.N_bits = n;
+  liblte_rrc_unpack_bcch_dlsch_msg((LIBLTE_BIT_MSG_STRUCT *) &bit_buf, &dlsch_msg);
 
 
-	if (dlsch_msg.N_sibs > 0) 
-	{
-  		if (LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_1 == dlsch_msg.sibs[0].sib_type) 
-		{
-	
-			// Handle SIB1
-			//memcpy(&current_cell->sib1, &
-			//, //sizeof(LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_1_STRUCT));
-			LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_1_STRUCT * sib1 = &dlsch_msg.sibs[0].sib.sib1; 
-
-			printf("SIB1 received: ");
-
-			// PLMNs
-			for(int i = 0; i < sib1->N_plmn_ids; ++i)
-				printf("PLMN: MCC=%03X MNC=%03X\n", sib1->plmn_id[i].id.mcc, sib1->plmn_id[i].id.mnc);
-	
-			// Scheduling Info
-
-			printf("Scheduling Info (%d):\n", sib1->N_sched_info);
-
-			for (int i = 0; i < sib1->N_sched_info; ++i)
-			{
-				if (i == 0)
-				{
-					printf("SIB2: Periodicity=%s\n", liblte_rrc_si_periodicity_text[sib1->sched_info[i].si_periodicity]);	
-				}
-				else
-				{
-					printf("SIBS: [ ");
-			
-					for(int j = 0; j < sib1->sched_info[i].N_sib_mapping_info; ++j)
-						printf("%s", liblte_rrc_sib_type_text[sib1->sched_info[i].sib_mapping_info[j].sib_type]);
-
-					printf(" ] Periodicity=%s\n", liblte_rrc_si_periodicity_text[sib1->sched_info[i].si_periodicity]);
-				}
-			}
-
-			// TDD
-			if(sib1->tdd)
-			{
-				printf("TDD Info: [SF Assignment=%d Special SF Patterns=%d]\n", sib1->tdd_cnfg.sf_assignment, sib1->tdd_cnfg.special_sf_patterns);
-			}
-			else
-			{
-				printf("TDD Info: []\n");
-			}
-
-			printf("Cell ID=%d TAC=%d QRXLEV_min=%d QRXLEV_min_offset=%d SI-ValueTag=%d FreqBand=%d\n", 
-							sib1->cell_id, sib1->tracking_area_code, sib1->q_rx_lev_min, sib1->q_rx_lev_min_offset, sib1->system_info_value_tag, sib1->freq_band_indicator);
-			printf("Cell Barring: [%s]\n", liblte_rrc_cell_barred_text[sib1->cell_barred]);
-			printf("Intra-Freq Reselection: [%s]\n", liblte_rrc_intra_freq_reselection_text[sib1->intra_freq_reselection]);
-			printf("SI Window Length: [%s]\n", liblte_rrc_si_window_length_text[sib1->si_window_length]);
-			printf("CSG Indicator=%d, CSG Id=%d\n", sib1->csg_indication, sib1->csg_id);
-
-  		}
-		else
-		{
-			printf("This was not SIB1!\n");
-		}
-	}
-	else
-	{
-		printf("No SIBs decoded!\n");
-	}
+  for(uint32 i = 0; i < dlsch_msg.N_sibs; ++i)
+  {
+    switch(dlsch_msg.sibs[i].sib_type)
+    {
+      case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_1:
+        cell_measurement_decode_sib1(&dlsch_msg.sibs[i].sib.sib1);
+        break;
+      case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_2:
+        cell_measurement_decode_sib2(&dlsch_msg.sibs[i].sib.sib2);
+        break;
+      default:
+        printf("ERROR: Unsupported SIB type %s\n", liblte_rrc_sib_type_text[dlsch_msg.sibs[0].sib_type]);
+    }
+  }
 }
 
 
+static void
+cell_measurement_decode_sib1(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_1_STRUCT * sib1)
+{
+  printf("SIB1 received: \n");
+
+  // PLMNs
+  for(uint32 i = 0; i < sib1->N_plmn_ids; ++i)
+    printf("PLMN: MCC=%03X MNC=%03X\n", sib1->plmn_id[i].id.mcc, sib1->plmn_id[i].id.mnc);
+
+  // Scheduling Info
+  printf("Scheduling Info (%d):\n", sib1->N_sched_info);
+
+  for (uint32 i = 0; i < sib1->N_sched_info; ++i)
+  {
+    if (i == 0)
+    {
+      printf("SIB2: Periodicity=%s\n", liblte_rrc_si_periodicity_text[sib1->sched_info[i].si_periodicity]);	
+    }
+    else
+    {
+      printf("SIBS: [ ");
+
+      for(uint32 j = 0; j < sib1->sched_info[i].N_sib_mapping_info; ++j)
+        printf("%s", liblte_rrc_sib_type_text[sib1->sched_info[i].sib_mapping_info[j].sib_type]);
+
+      printf(" ] Periodicity=%s\n", liblte_rrc_si_periodicity_text[sib1->sched_info[i].si_periodicity]);
+    }
+  }
+
+  // TDD
+  if(sib1->tdd)
+    printf("TDD Info: [SF Assignment=%d Special SF Patterns=%d]\n", sib1->tdd_cnfg.sf_assignment, sib1->tdd_cnfg.special_sf_patterns);
+  else
+    printf("TDD Info: []\n");
+
+  printf("Cell ID=%d TAC=%d QRXLEV_min=%d QRXLEV_min_offset=%d SI-ValueTag=%d FreqBand=%d\n", 
+    sib1->cell_id, sib1->tracking_area_code, sib1->q_rx_lev_min, sib1->q_rx_lev_min_offset, sib1->system_info_value_tag, sib1->freq_band_indicator);
+  printf("Cell Barring: [%s]\n", liblte_rrc_cell_barred_text[sib1->cell_barred]);
+  printf("Intra-Freq Reselection: [%s]\n", liblte_rrc_intra_freq_reselection_text[sib1->intra_freq_reselection]);
+  printf("SI Window Length: [%s]\n", liblte_rrc_si_window_length_text[sib1->si_window_length]);
+  printf("CSG Indicator=%d, CSG Id=%d\n", sib1->csg_indication, sib1->csg_id);
+}
+
+
+static void
+cell_measurement_decode_sib2(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_2_STRUCT * sib2)
+{
+  printf("SIB2 received: \n");
+}
 
