@@ -54,7 +54,7 @@ cell_search_cfg_t cell_detect_config = {
 };
 
 
-static int cell_measurement_decode_sib(uint8_t * data, uint32_t n);
+static uint32 cell_measurement_decode_sib(uint8_t * data, uint32_t n);
 static void cell_measurement_decode_sib1(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_1_STRUCT * sib1);
 static void cell_measurement_decode_sib2(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_2_STRUCT * sib2);
 
@@ -373,16 +373,26 @@ int main(int argc, char **argv) {
             } else {
               
               srslte_vec_fprint_byte(stdout, data[0], n/8);
-              
-              int sib_type =  cell_measurement_decode_sib(data[0], n);
-              static uint32 sibs_rxd = 0;
-              const uint32 sibs_rqd = (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_1) | (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_2);
 
-              if(sib_type != -1)
-                sibs_rxd |= (1 << sib_type);
+              if (acks[0])
+              {
+                uint32 sib_type =  cell_measurement_decode_sib(data[0], n);
+                static uint32 sibs_rxd = 0;
+                const uint32 sibs_rqd = (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_1) | (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_2) | (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_5) | (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_6) | (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_7);
 
-              if((sibs_rxd & sibs_rqd) == sibs_rqd)
-                state = MEASURE;
+                if(sib_type)
+                  sibs_rxd |= (sib_type);
+
+                printf("SIBs RXd=%04x RQd=%04x\n", sibs_rxd, sibs_rqd);
+                if((sibs_rxd & sibs_rqd) == sibs_rqd)
+                {
+                  state = MEASURE;
+                }
+              }
+              else
+              {
+                printf("BAD CRC\n");
+              }
             }
           }
         break;
@@ -476,10 +486,10 @@ int main(int argc, char **argv) {
 }
 
 
-static int 
+static uint32 
 cell_measurement_decode_sib(uint8_t * data, uint32_t n)
 {
-  LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_ENUM sib_type = LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_ENUM(-1);
+  uint32 sib_type_bmp = 0;
 
   printf("SI Decode, bits=%d\n", n);
   srslte::bit_buffer_t bit_buf;
@@ -494,9 +504,9 @@ cell_measurement_decode_sib(uint8_t * data, uint32_t n)
   {
     for(uint32 i = 0; i < dlsch_msg.N_sibs; ++i)
     {
-      sib_type = dlsch_msg.sibs[i].sib_type;
+      sib_type_bmp |= 1 << (uint32)dlsch_msg.sibs[i].sib_type;
       
-      switch(sib_type)
+      switch(dlsch_msg.sibs[i].sib_type)
       {
         case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_1:
           cell_measurement_decode_sib1(&dlsch_msg.sibs[i].sib.sib1);
@@ -504,8 +514,23 @@ cell_measurement_decode_sib(uint8_t * data, uint32_t n)
         case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_2:
           cell_measurement_decode_sib2(&dlsch_msg.sibs[i].sib.sib2);
           break;
+        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_3:
+        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_4:
+        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_5:
+        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_6:
+        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_7:
+        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_8:
+        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_9:
+        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_10:
+        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_11:
+        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_12:
+        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_13:
+          printf("WARNING: Unsupported SIB type %s\n", liblte_rrc_sib_type_text[dlsch_msg.sibs[i].sib_type]);
+          break;
+    
         default:
-          printf("ERROR: Unsupported SIB type %s\n", liblte_rrc_sib_type_text[sib_type]);
+          printf("ERROR: Unknown SIB type %s\n", liblte_rrc_sib_type_text[dlsch_msg.sibs[i].sib_type]);
+          exit(1);
       }
     }
   }
@@ -516,7 +541,7 @@ cell_measurement_decode_sib(uint8_t * data, uint32_t n)
   }
   
 
-  return (int) sib_type;
+  return (uint32) sib_type_bmp;
 }
 
 
