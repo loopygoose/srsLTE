@@ -378,7 +378,7 @@ int main(int argc, char **argv) {
               {
                 uint32 sib_type =  cell_measurement_decode_sib(data[0], n);
                 static uint32 sibs_rxd = 0;
-                const uint32 sibs_rqd = (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_1) | (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_2) | (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_5) | (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_6) | (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_7);
+                const uint32 sibs_rqd = (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_1) | (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_2) | (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_5) | (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_6);
 
                 if(sib_type)
                   sibs_rxd |= (sib_type);
@@ -596,8 +596,106 @@ cell_measurement_decode_sib2(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_2_STRUCT * sib
 {
   printf("----------------------------------------------------------\n");
   printf("SIB2 received: \n");
+  printf("Barring: Present=%d AC Emergency=%d MO Data=%d MO Signalling=%d\n", sib2->ac_barring_info_present, sib2->ac_barring_for_emergency, sib2->ac_barring_for_mo_data.enabled, sib2->ac_barring_for_mo_signalling.enabled);
 
-  printf("RS Power=%ddBm\n", sib2->rr_config_common_sib.pdsch_cnfg.rs_power);
+  if(sib2->ac_barring_for_mo_data.enabled)
+    printf("MO Data: Special AC:%d, Time=%ss Factor=%s\n",sib2->ac_barring_for_mo_data.for_special_ac, liblte_rrc_ac_barring_time_text[sib2->ac_barring_for_mo_data.time], liblte_rrc_ac_barring_factor_text[sib2->ac_barring_for_mo_data.factor]);
+
+  if(sib2->ac_barring_for_mo_signalling.enabled)
+    printf("MO Signalling: Special AC:%d, Time=%ss Factor=%s\n",sib2->ac_barring_for_mo_data.for_special_ac, liblte_rrc_ac_barring_time_text[sib2->ac_barring_for_mo_data.time], liblte_rrc_ac_barring_factor_text[sib2->ac_barring_for_mo_data.factor]);
+
+
+  if(sib2->rr_config_common_sib.rach_cnfg.preambles_group_a_cnfg.present)
+  {
+    printf("RACH: Group A: SizeRA=%s MsgSize=%s PwrOffsetGroupB=%s\n", 
+      liblte_rrc_size_of_ra_preambles_group_a_text[sib2->rr_config_common_sib.rach_cnfg.preambles_group_a_cnfg.size_of_ra],
+      liblte_rrc_message_size_group_a_text[sib2->rr_config_common_sib.rach_cnfg.preambles_group_a_cnfg.msg_size],
+      liblte_rrc_message_power_offset_group_b_text[sib2->rr_config_common_sib.rach_cnfg.preambles_group_a_cnfg.msg_pwr_offset_group_b] );
+  }
+
+  printf("RACH: NumRAPreambles=%s RampStep=%s InitalRxTargetPwr=%s TransMax=%s ResponseWindow=%s CrTimer=%s MaxHarqMsg3=%d\n",
+    liblte_rrc_number_of_ra_preambles_text[sib2->rr_config_common_sib.rach_cnfg.num_ra_preambles],
+    liblte_rrc_power_ramping_step_text[sib2->rr_config_common_sib.rach_cnfg.pwr_ramping_step],
+    liblte_rrc_preamble_initial_received_target_power_text[sib2->rr_config_common_sib.rach_cnfg.preamble_init_rx_target_pwr],
+    liblte_rrc_preamble_trans_max_text[sib2->rr_config_common_sib.rach_cnfg.preamble_trans_max],
+    liblte_rrc_ra_response_window_size_text[sib2->rr_config_common_sib.rach_cnfg.ra_resp_win_size],
+    liblte_rrc_mac_contention_resolution_timer_text[sib2->rr_config_common_sib.rach_cnfg.mac_con_res_timer],
+    sib2->rr_config_common_sib.rach_cnfg.max_harq_msg3_tx);
+
+  printf("BCCH: ModPeriodCoeff=%s\n", liblte_rrc_modification_period_coeff_text[sib2->rr_config_common_sib.bcch_cnfg.modification_period_coeff]);
+  printf("PCCH: DefaultPagingCycle=%s nB=%s\n",
+    liblte_rrc_default_paging_cycle_text[sib2->rr_config_common_sib.pcch_cnfg.default_paging_cycle],
+    liblte_rrc_nb_text[sib2->rr_config_common_sib.pcch_cnfg.nB]);
+
+  printf("PRACH: ConfigIndex=%d ZeroCorrelationZone=%d FreqOffset=%d HighSpeedFlag=%d RootSeqIndex=%d\n",
+    sib2->rr_config_common_sib.prach_cnfg.prach_cnfg_info.prach_config_index,
+    sib2->rr_config_common_sib.prach_cnfg.prach_cnfg_info.zero_correlation_zone_config,
+    sib2->rr_config_common_sib.prach_cnfg.prach_cnfg_info.prach_freq_offset,
+    sib2->rr_config_common_sib.prach_cnfg.prach_cnfg_info.high_speed_flag,
+    sib2->rr_config_common_sib.prach_cnfg.root_sequence_index);
+
+  printf("PDSCH: Pb=%d RsPower=%ddBm\n",
+    sib2->rr_config_common_sib.pdsch_cnfg.p_b,
+    sib2->rr_config_common_sib.pdsch_cnfg.rs_power);
+
+  printf("PUSCH: RsGrpAssignmt=%d RsCs=%d RsGroupHop=%d RsSeqHop=%d HopMode=%d Nsb=%d HopOffset=%d 64QAM=%d",
+    sib2->rr_config_common_sib.pusch_cnfg.ul_rs.group_assignment_pusch,
+    sib2->rr_config_common_sib.pusch_cnfg.ul_rs.cyclic_shift,
+    sib2->rr_config_common_sib.pusch_cnfg.ul_rs.group_hopping_enabled,
+    sib2->rr_config_common_sib.pusch_cnfg.ul_rs.sequence_hopping_enabled,
+    sib2->rr_config_common_sib.pusch_cnfg.hopping_mode,
+    sib2->rr_config_common_sib.pusch_cnfg.n_sb,
+    sib2->rr_config_common_sib.pusch_cnfg.pusch_hopping_offset,
+    sib2->rr_config_common_sib.pusch_cnfg.enable_64_qam);
+
+  printf("PUCCH: DeltaPucchShift=%s N1PucchAn=%d NrbCQI=%d NCsAn=%d\n",
+    liblte_rrc_delta_pucch_shift_text[sib2->rr_config_common_sib.pucch_cnfg.delta_pucch_shift],
+    sib2->rr_config_common_sib.pucch_cnfg.n1_pucch_an,
+    sib2->rr_config_common_sib.pucch_cnfg.n_rb_cqi,
+    sib2->rr_config_common_sib.pucch_cnfg.n_cs_an);
+
+  if(sib2->rr_config_common_sib.srs_ul_cnfg.present)
+  {
+    printf("SRS: BwConfig=%s SfConfig=%s AckNackSimulTx=%d\n", 
+      liblte_rrc_srs_bw_config_text[sib2->rr_config_common_sib.srs_ul_cnfg.bw_cnfg],
+      liblte_rrc_srs_subfr_config_text[sib2->rr_config_common_sib.srs_ul_cnfg.subfr_cnfg],
+      sib2->rr_config_common_sib.srs_ul_cnfg.ack_nack_simul_tx
+    );
+
+    if(sib2->rr_config_common_sib.srs_ul_cnfg.max_up_pts_present)
+        printf("SRS: MaxUpPts=%d\n", sib2->rr_config_common_sib.srs_ul_cnfg.max_up_pts);
+  }
+
+  printf("ULPWR: DeltaFlist F1=%s F1b=%s F2=%s F2a=%s F2b=%s\n",
+    liblte_rrc_delta_f_pucch_format_1_text[sib2->rr_config_common_sib.ul_pwr_ctrl.delta_flist_pucch.format_1],
+    liblte_rrc_delta_f_pucch_format_1b_text[sib2->rr_config_common_sib.ul_pwr_ctrl.delta_flist_pucch.format_1b],
+    liblte_rrc_delta_f_pucch_format_2_text[sib2->rr_config_common_sib.ul_pwr_ctrl.delta_flist_pucch.format_2],
+    liblte_rrc_delta_f_pucch_format_2a_text[sib2->rr_config_common_sib.ul_pwr_ctrl.delta_flist_pucch.format_2a],
+    liblte_rrc_delta_f_pucch_format_2b_text[sib2->rr_config_common_sib.ul_pwr_ctrl.delta_flist_pucch.format_2b]);
+
+  printf("ULPWR: Alpha=%s P0NomPusch=%d P0NomPucch=%d DeltaPreambleMsg3=%d\n",
+    liblte_rrc_ul_power_control_alpha_text[sib2->rr_config_common_sib.ul_pwr_ctrl.alpha],
+    sib2->rr_config_common_sib.ul_pwr_ctrl.p0_nominal_pusch,
+    sib2->rr_config_common_sib.ul_pwr_ctrl.p0_nominal_pucch,
+    sib2->rr_config_common_sib.ul_pwr_ctrl.delta_preamble_msg3);
+
+  printf("ULCP: Length=%s\n", liblte_rrc_ul_cp_length_text[sib2->rr_config_common_sib.ul_cp_length]);
+
+  printf("T&C: T300=%s T301=%s T310=%s N310=%s T311=%s N311=%s\n",
+  liblte_rrc_t300_text[sib2->ue_timers_and_constants.t300],
+    liblte_rrc_t301_text[sib2->ue_timers_and_constants.t301],
+    liblte_rrc_t310_text[sib2->ue_timers_and_constants.t310],
+    liblte_rrc_n310_text[sib2->ue_timers_and_constants.n310],
+    liblte_rrc_t311_text[sib2->ue_timers_and_constants.t311],
+    liblte_rrc_n311_text[sib2->ue_timers_and_constants.n311] );
+
+  printf("Additional Spectrum Emission=%d MBSFN Config Size=%d\n", sib2->additional_spectrum_emission, sib2->mbsfn_subfr_cnfg_list_size);
+  printf("TAT=%s\n", liblte_rrc_time_alignment_timer_text[sib2->time_alignment_timer]);
+  printf("UL Bandwidth Present=%d Value=%s\n", sib2->ul_bw.present, liblte_rrc_ul_bw_text[sib2->ul_bw.bw]);
+  printf("EARFCN Present=%d Value=%d\n", sib2->arfcn_value_eutra.present, sib2->arfcn_value_eutra.value);
+
   printf("----------------------------------------------------------\n");
 }
+
+
 
