@@ -54,6 +54,8 @@ cell_search_cfg_t cell_detect_config = {
 };
 
 
+static int cell_measurement_receive_sib(srslte_ue_dl_t *q, srslte_ue_sync_t * ue_sync, cf_t * input[SRSLTE_MAX_PORTS], uint8_t * data[SRSLTE_MAX_CODEWORDS],
+                              uint32_t tti, uint32 * sib_bmp);
 static uint32 cell_measurement_decode_sib(uint8_t * data, uint32_t n);
 static void cell_measurement_decode_sib1(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_1_STRUCT * sib1);
 static void cell_measurement_decode_sib2(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_2_STRUCT * sib2);
@@ -152,7 +154,7 @@ int srslte_rf_recv_wrapper(void *h, cf_t *data[SRSLTE_MAX_PORTS], uint32_t nsamp
   return srslte_rf_recv((srslte_rf_t *)h, data[0], nsamples, 1);
 }
 
-enum receiver_state { DECODE_MIB, DECODE_SIB, MEASURE} state; 
+enum receiver_state { DECODE_MIB, DECODE_SIB1, DECODE_SIBX, MEASURE} state; 
 
 #define MAX_SINFO 10
 #define MAX_NEIGHBOUR_CELLS     128
@@ -178,9 +180,12 @@ int main(int argc, char **argv) {
   float rssi_utra=0,rssi=0, rsrp=0, rsrq=0, snr=0;
   cf_t *ce[SRSLTE_MAX_PORTS];
   float cfo = 0;
-  bool acks[SRSLTE_MAX_CODEWORDS] = {false, false};
   FILE * crs = NULL;
-	
+
+  uint32 sibs_rxd = 0;
+  const uint32 sibs_rqd = (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_1) | (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_2) | (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_5) | (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_6);
+  uint32 sib_bmp = 0;
+
   if (parse_args(&prog_args, argc, argv)) {
     exit(-1);
   }
@@ -327,13 +332,15 @@ int main(int argc, char **argv) {
 
   /* Main loop */
   while ((sf_cnt < prog_args.nof_subframes || prog_args.nof_subframes == -1) && !go_exit) {
-    
+
     ret = srslte_ue_sync_zerocopy_multi(&ue_sync, sf_buffer);
     if (ret < 0) {
       fprintf(stderr, "Error calling srslte_ue_sync_work()\n");
     }
 
-        
+    uint32 sfnsf = sfn * 10 + srslte_ue_sync_get_sfidx(&ue_sync);
+    bool sib1_sf = srslte_ue_sync_get_sfidx(&ue_sync) == 5 && (sfn % 2) == 0;
+
     /* srslte_ue_sync_get_buffer returns 1 if successfully read 1 aligned subframe */
     if (ret == 1) {
       switch (state) {
@@ -348,55 +355,42 @@ int main(int argc, char **argv) {
               srslte_pbch_mib_unpack(bch_payload, &cell, &sfn);
               printf("Decoded MIB. SFN: %d, offset: %d\n", sfn, sfn_offset);
               sfn = (sfn + sfn_offset)%1024; 
-              state = DECODE_SIB; 
+              printf("Looking for SIB1...\n");
+              state = DECODE_SIB1; 
             }
           }
           break;
-        case DECODE_SIB:
-          /* We are looking for SI Blocks, search only in appropiate places */
-          if (1){ //(srslte_ue_sync_get_sfidx(&ue_sync) == 5 && (sfn%2)==0)) {
+        case DECODE_SIB1:
+          if (sib1_sf)
+          {
+            n = cell_measurement_receive_sib(&ue_dl, &ue_sync, sf_buffer, data, sfnsf, &sib_bmp);
 
-            memset(data[0], 0, 8 * 1500 * sizeof(uint8));
-            memset(data[1], 0, 8 * 1500 * sizeof(uint8));
-            acks[0] = false;
-            acks[1] = false;
-              
-            n = srslte_ue_dl_decode(&ue_dl, sf_buffer, data, 0, sfn*10+srslte_ue_sync_get_sfidx(&ue_sync), acks);
-            if (n < 0) {
-              fprintf(stderr, "Error decoding UE DL\n");fflush(stdout);
-              return -1;
-            } else if (n == 0) {
-              printf("CFO: %+6.4f kHz, SFO: %+6.4f kHz, PDCCH-Det: %.3f\r",
-                      srslte_ue_sync_get_cfo(&ue_sync)/1000, srslte_ue_sync_get_sfo(&ue_sync)/1000, 
-                      (float) ue_dl.nof_detected/nof_trials);
-              nof_trials++; 
-            } else {
-              
-              srslte_vec_fprint_byte(stdout, data[0], n/8);
+            if (n > 0)
+            {
+              sibs_rxd |= (sib_bmp);
 
-              if (acks[0])
+              if(sib_bmp & (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_1))
               {
-                uint32 sib_type =  cell_measurement_decode_sib(data[0], n);
-                static uint32 sibs_rxd = 0;
-                const uint32 sibs_rqd = (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_1) | (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_2) | (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_5) | (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_6);
-
-                if(sib_type)
-                  sibs_rxd |= (sib_type);
-
-                printf("SIBs RXd=%04x RQd=%04x\n", sibs_rxd, sibs_rqd);
-                if((sibs_rxd & sibs_rqd) == sibs_rqd)
-                {
-                  state = MEASURE;
-                }
-              }
-              else
-              {
-                printf("BAD CRC\n");
+                printf("SIB1 RXd=%04x RQd=%04x\n", sibs_rxd, sibs_rqd);
+                state = DECODE_SIBX;
               }
             }
           }
-        break;
-        
+          break;
+        case DECODE_SIBX:
+          if(!sib1_sf)
+          {
+            n = cell_measurement_receive_sib(&ue_dl, &ue_sync, sf_buffer, data, sfnsf, &sib_bmp);
+
+            if (n > 0)
+            {
+              sibs_rxd |= (sib_bmp);
+              printf("SIBx RXd=%04x RQd=%04x\n", sibs_rxd, sibs_rqd);
+              if((sibs_rxd & sibs_rqd) == sibs_rqd)
+                state = MEASURE;
+            }
+          }
+          break;
       case MEASURE:
         if (srslte_ue_sync_get_sfidx(&ue_sync) == 5 || (sfn%128) == 127) {
           /* Run FFT for all subframe data */
@@ -412,7 +406,7 @@ int main(int argc, char **argv) {
           
           nframes++;          
 
-          if (crs && ((sfn%128) == 127))
+          if (crs && ((sfn % 128) == 127))
           {
             int qq = 0;
             fprintf(crs, "[ID=%d SFN=%d SF=%d NPRB=%d Nports=%d CP=%d PHICHlen=%d PHICHres=%d]\n", 
@@ -428,8 +422,6 @@ int main(int argc, char **argv) {
           }
         } 
 
-
-        
         if ((nframes%100) == 0 || rx_gain_offset == 0) {
           if (srslte_rf_has_rssi(&rf)) {
             rx_gain_offset = 10*log10(rssi*1000)-srslte_rf_get_rssi(&rf);
@@ -483,6 +475,42 @@ int main(int argc, char **argv) {
   srslte_rf_close(&rf);
   printf("\nBye\n");
   exit(0);
+}
+
+
+
+
+static int cell_measurement_receive_sib(srslte_ue_dl_t *q, srslte_ue_sync_t * ue_sync, cf_t * input[SRSLTE_MAX_PORTS], uint8_t * data[SRSLTE_MAX_CODEWORDS],
+                              uint32_t tti, uint32 * sib_bmp)
+{
+  bool acks[SRSLTE_MAX_CODEWORDS] = {false, false};
+  int n = srslte_ue_dl_decode(q, input, data, 0, tti, acks);
+
+  *sib_bmp = 0;
+
+  if (n < 0) 
+  {
+    fprintf(stderr, "Error decoding UE DL\n");
+    fflush(stdout);
+  } 
+  else if (n == 0)
+  {
+    printf("CFO: %+6.4f kHz, SFO: %+6.4f kHz, PDCCH-Det: %.3f\r",
+            srslte_ue_sync_get_cfo(ue_sync) / 1000, 
+            srslte_ue_sync_get_sfo(ue_sync) / 1000, 
+            (float) q->nof_detected / 1 );
+  }
+  else
+  {
+    srslte_vec_fprint_byte(stdout, data[0], n/8);
+
+    if(acks[0])
+      *sib_bmp = cell_measurement_decode_sib(data[0], n);
+    else
+      printf("BAD CRC\n");
+  }
+
+  return n;
 }
 
 
