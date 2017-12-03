@@ -40,7 +40,7 @@
 
 #ifndef DISABLE_GRAPHICS
 void init_plots();
-void do_plots_pss(float *corr, float energy, uint32_t size);
+void do_plots_pss(int i, float *corr, float energy, uint32_t size);
 void do_plots_sss(float *corr_m0, float *corr_m1);
 #endif
 
@@ -125,16 +125,20 @@ int main(int argc, char **argv) {
   cf_t *buffer; 
   int frame_cnt, n; 
   srslte_rf_t rf;
-  srslte_pss_synch_t pss; 
+  srslte_pss_synch_t pss[3]; 
   srslte_cfo_t cfocorr, cfocorr64; 
   srslte_sss_synch_t sss; 
   int32_t flen; 
-  int peak_idx, last_peak;
-  float peak_value; 
-  float mean_peak; 
+
+  int peak_idx[3], last_peak;
+  float peak_value[3]; 
+  float mean_peak[3]; 
+  float max_peak_value;
+  int best_pss;
   uint32_t nof_det, nof_nodet, nof_nopeak, nof_nopeakdet;
   cf_t ce[SRSLTE_PSS_LEN]; 
   float sfo = 0; 
+  int i;
   
   parse_args(argc, argv);
 
@@ -175,15 +179,23 @@ int main(int argc, char **argv) {
     perror("malloc");
     exit(-1);
   }
-    
-  if (srslte_pss_synch_init_fft(&pss, flen, fft_size)) {
-    fprintf(stderr, "Error initiating PSS\n");
-    exit(-1);
+
+  for(i=0; i<3; ++i)
+  {
+    if (srslte_pss_synch_init_fft(&pss[i], flen, fft_size)) 
+    {
+      fprintf(stderr, "Error initiating PSS %d\n", i);
+      exit(-1);
+    }
   }
 
-  if (srslte_pss_synch_set_N_id_2(&pss, N_id_2_sync)) {
-    fprintf(stderr, "Error setting N_id_2=%d\n",N_id_2_sync);
-    exit(-1);
+  for(i=0; i<3;++i)
+  {
+    if (srslte_pss_synch_set_N_id_2(&pss[i], i)) 
+    {
+      fprintf(stderr, "Error setting N_id_2=%d\n",i);
+      exit(-1);
+    }
   }
   
   srslte_cfo_init(&cfocorr, flen); 
@@ -194,7 +206,6 @@ int main(int argc, char **argv) {
     exit(-1);
   }
   
-  srslte_sss_synch_set_N_id_2(&sss, N_id_2);
 
   printf("N_id_2: %d\n", N_id_2);  
 
@@ -206,7 +217,10 @@ int main(int argc, char **argv) {
   nof_det = nof_nodet = nof_nopeak = nof_nopeakdet = 0;
   frame_cnt = 0;
   last_peak = 0; 
-  mean_peak = 0;
+
+  for(i=0; i<3; ++i)
+    mean_peak[i] = 0;
+  
   int peak_offset = 0;
   float cfo; 
   float mean_cfo = 0; 
@@ -223,105 +237,137 @@ int main(int argc, char **argv) {
   uint32_t min_peak = fft_size; 
   uint32_t min_peak_ = fft_size; 
   
-  while(frame_cnt < nof_frames || nof_frames == -1) {
+  while(frame_cnt < nof_frames || nof_frames == -1) 
+  {
     n = srslte_rf_recv(&rf, buffer, flen - peak_offset, 1);
-    if (n < 0) {
+
+    if (n < 0) 
+    {
       fprintf(stderr, "Error receiving samples\n");
       exit(-1);
     }
+
+    max_peak_value = 0;
+    best_pss = 0;
     
-    peak_idx = srslte_pss_synch_find_pss(&pss, buffer, &peak_value);
-    if (peak_idx < 0) {
-      fprintf(stderr, "Error finding PSS peak\n");
-      exit(-1);
+    for(i=0; i<3; ++i)
+    {
+      peak_idx[i] = srslte_pss_synch_find_pss(&pss[i], buffer, &peak_value[i]);
+      if (peak_idx[i] < 0) 
+      {
+        fprintf(stderr, "Error finding PSS peak %d\n", i);
+        exit(-1);
+      }
+
+      if(peak_value[i] > max_peak_value)
+      {
+        max_peak_value = peak_value[i];
+        best_pss = i;
+      }
+
+      mean_peak[i] = SRSLTE_VEC_CMA(peak_value[i], mean_peak[i], frame_cnt);
     }
-    
-    mean_peak = SRSLTE_VEC_CMA(peak_value, mean_peak, frame_cnt);
-    
-    if (peak_value >= threshold) {
+
+    if (peak_value[best_pss] >= threshold) 
+    {
+      srslte_sss_synch_set_N_id_2(&sss, best_pss);
+
       nof_det++;
         
-      if (peak_idx >= fft_size) {
-
+      if (peak_idx[best_pss] >= fft_size) 
+      {
         // Estimate CFO 
-        cfo = srslte_pss_synch_cfo_compute(&pss, &buffer[peak_idx-fft_size]);
+        cfo = srslte_pss_synch_cfo_compute(&pss[best_pss], &buffer[peak_idx[best_pss]-fft_size]);
         mean_cfo = SRSLTE_VEC_CMA(cfo, mean_cfo, frame_cnt);        
 
         // Correct CFO
         srslte_cfo_correct(&cfocorr, buffer, buffer, -mean_cfo / fft_size);               
 
         // Estimate channel
-        if (srslte_pss_synch_chest(&pss, &buffer[peak_idx-fft_size], ce)) {
+        if (srslte_pss_synch_chest(&pss[best_pss], &buffer[peak_idx[best_pss]-fft_size], ce)) 
+        {
           fprintf(stderr, "Error computing channel estimation\n");
           exit(-1);
         }
         
         // Find SSS 
-        int sss_idx = peak_idx-2*fft_size-(SRSLTE_CP_ISNORM(cp)?SRSLTE_CP_LEN(fft_size, SRSLTE_CP_NORM_LEN):SRSLTE_CP_LEN(fft_size, SRSLTE_CP_EXT_LEN));             
-        if (sss_idx >= 0 && sss_idx < flen-fft_size) {
+        int sss_idx = peak_idx[best_pss]-2*fft_size-(SRSLTE_CP_ISNORM(cp)?SRSLTE_CP_LEN(fft_size, SRSLTE_CP_NORM_LEN):SRSLTE_CP_LEN(fft_size, SRSLTE_CP_EXT_LEN));             
+        if (sss_idx >= 0 && sss_idx < flen-fft_size) 
+        {
+          srslte_sss_synch_m0m1_partial(&sss, &buffer[sss_idx], 1, NULL, &m0, &m0_value, &m1, &m1_value);
+          if (srslte_sss_synch_N_id_1(&sss, m0, m1) != N_id_1) 
+          {
+            sss_error1++;     
+          }
           INFO("Full N_id_1: %d\n", srslte_sss_synch_N_id_1(&sss, m0, m1));
+
           srslte_sss_synch_m0m1_partial(&sss, &buffer[sss_idx], 1, ce, &m0, &m0_value, &m1, &m1_value);
-          if (srslte_sss_synch_N_id_1(&sss, m0, m1) != N_id_1) {
+          if (srslte_sss_synch_N_id_1(&sss, m0, m1) != N_id_1) 
+          {
             sss_error2++;            
           }
           INFO("Partial N_id_1: %d\n", srslte_sss_synch_N_id_1(&sss, m0, m1));
+
           srslte_sss_synch_m0m1_diff_coh(&sss, &buffer[sss_idx], ce, &m0, &m0_value, &m1, &m1_value);
-          if (srslte_sss_synch_N_id_1(&sss, m0, m1) != N_id_1) {
+          if (srslte_sss_synch_N_id_1(&sss, m0, m1) != N_id_1) 
+          {
             sss_error3++;            
           }
           INFO("Diff N_id_1: %d\n", srslte_sss_synch_N_id_1(&sss, m0, m1));
         }
-        srslte_sss_synch_m0m1_partial(&sss, &buffer[sss_idx], 1, NULL, &m0, &m0_value, &m1, &m1_value);
-        if (srslte_sss_synch_N_id_1(&sss, m0, m1) != N_id_1) {
-          sss_error1++;     
-        }
-      
+
+        
         // Estimate CP 
-        if (peak_idx > 2*(fft_size + SRSLTE_CP_LEN_EXT(fft_size))) {
-          srslte_cp_t cp = srslte_sync_detect_cp(&ssync, buffer, peak_idx);
-          if (SRSLTE_CP_ISNORM(cp)) {
+        if (peak_idx[best_pss] > 2*(fft_size + SRSLTE_CP_LEN_EXT(fft_size))) 
+        {
+          srslte_cp_t cp = srslte_sync_detect_cp(&ssync, buffer, peak_idx[best_pss]);
+          if (SRSLTE_CP_ISNORM(cp)) 
+          {
             cp_is_norm++; 
           }          
         }
         
       } else {
-        INFO("No space for CFO computation. Frame starts at \n",peak_idx);
+        INFO("No space for CFO computation. Frame starts at \n",peak_idx[best_pss]);
       }
       
       if(srslte_sss_synch_subframe(m0,m1) == 0)
       {
 #ifndef DISABLE_GRAPHICS
-          if (!disable_plots)
-            do_plots_sss(sss.corr_output_m0, sss.corr_output_m1);
+        if (!disable_plots)
+          do_plots_sss(sss.corr_output_m0, sss.corr_output_m1);
 #endif
       }
       
-    } else {
+    }
+    else 
+    {
       nof_nodet++;
     }
 
     printf("[%5d]: Pos: %5d (%d-%d), PSR: %4.1f (~%4.1f) Pdet: %4.2f, "
-           "FA: %4.2f, CFO: %+4.1f kHz, SFO: %+.2f Hz SSSmiss: %4.2f/%4.2f/%4.2f CPNorm: %.0f%%\r", 
+           "FA: %4.2f, CFO: %+4.1f kHz, SFO: %+.2f Hz SSSmiss: %4.2f/%4.2f/%4.2f CPNorm: %.0f%% BestPss=%d      \r", 
            frame_cnt, 
-           peak_idx, min_peak_, max_peak_,
-           peak_value, mean_peak,
+           peak_idx[best_pss], min_peak_, max_peak_,
+           peak_value[best_pss], mean_peak[best_pss],
            (float) nof_det/frame_cnt, 
            (float) nof_nopeakdet/frame_cnt, mean_cfo*15, sfo,
            (float) sss_error1/nof_det,(float) sss_error2/nof_det,(float) sss_error3/nof_det,
-           (float) cp_is_norm/nof_det * 100);
+           (float) cp_is_norm/nof_det * 100,
+           best_pss);
     
     if (frame_cnt > 100) {
-      if (abs(last_peak-peak_idx) > 4) {
-        if (peak_value >= threshold) {
+      if (abs(last_peak-peak_idx[best_pss]) > 4) {
+        if (peak_value[best_pss] >= threshold) {
           nof_nopeakdet++;
         } 
         nof_nopeak++;                  
       } 
 
-      sfo = SRSLTE_VEC_CMA((peak_idx - last_peak)/5e-3, sfo, frame_cnt);
+      sfo = SRSLTE_VEC_CMA((peak_idx[best_pss] - last_peak)/5e-3, sfo, frame_cnt);
       
       int frame_idx = frame_cnt % 200;
-      uint32_t peak_offset_symbol = peak_idx%fft_size;
+      uint32_t peak_offset_symbol = peak_idx[best_pss]%fft_size;
       if (peak_offset_symbol > max_peak) {
         max_peak = peak_offset_symbol; 
       }
@@ -344,16 +390,23 @@ int main(int argc, char **argv) {
   
 #ifndef DISABLE_GRAPHICS
     if (!disable_plots) {
-      do_plots_pss(pss.conv_output_avg, pss.conv_output_avg[peak_idx], pss.fft_size+pss.frame_size-1);
+      for(i=0; i<3; ++i)
+        do_plots_pss(
+          i, 
+          pss[i].conv_output_avg,                   // Values
+          pss[best_pss].conv_output_avg[peak_idx[best_pss]],      // Peak
+          pss[i].fft_size+pss[i].frame_size-1 );    // Size
     }
 #endif
 
-    last_peak = peak_idx;
+    last_peak = peak_idx[best_pss];
 
   }
 
   srslte_sss_synch_free(&sss);
-  srslte_pss_synch_free(&pss);
+
+  for(i=0; i<3; ++i)
+    srslte_pss_synch_free(&pss[i]);
   free(buffer);
   srslte_rf_close(&rf);
 
@@ -372,7 +425,7 @@ extern cf_t *tmp2;
 
 
 #include "srsgui/srsgui.h"
-plot_real_t pssout;
+plot_real_t pssout[3];
 //plot_complex_t pce; 
 
 plot_real_t psss1;
@@ -382,11 +435,21 @@ cf_t tmpce[SRSLTE_PSS_LEN];
 
 
 void init_plots() {
+  int i;
   sdrgui_init();
-  plot_real_init(&pssout);
-  plot_real_setTitle(&pssout, "PSS xCorr");
-  plot_real_setLabels(&pssout, "Index", "Absolute value");
-  plot_real_setYAxisScale(&pssout, 0, 1);
+
+  for (i=0; i<3; ++i)
+  {
+    plot_real_init(&pssout[i]);
+
+    plot_real_setLabels(&pssout[i], "Index", "Absolute value");
+    plot_real_setYAxisScale(&pssout[i], 0, 1);
+  }
+
+  plot_real_setTitle(&pssout[0], "PSS xCorr 0");
+  plot_real_setTitle(&pssout[1], "PSS xCorr 1");
+  plot_real_setTitle(&pssout[2], "PSS xCorr 2");
+
   
   /*
   plot_complex_init(&pce);
@@ -403,9 +466,9 @@ void init_plots() {
   plot_real_setYAxisScale(&psss1, 0, 1);
 }
 
-void do_plots_pss(float *corr, float peak, uint32_t size) {  
-  srslte_vec_sc_prod_fff(corr,1./peak,tmp, size);
-  plot_real_setNewData(&pssout, tmp, size);          
+void do_plots_pss(int i, float *corr, float peak, uint32_t size) {  
+  srslte_vec_sc_prod_fff(corr, 1/peak, tmp, size);
+  plot_real_setNewData(&pssout[i], tmp, size);
 }
 
 void do_plots_sss(float *corr_m0, float *corr_m1) {  
