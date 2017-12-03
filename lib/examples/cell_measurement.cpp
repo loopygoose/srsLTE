@@ -59,7 +59,14 @@ static int cell_measurement_receive_sib(srslte_ue_dl_t *q, srslte_ue_sync_t * ue
 static uint32 cell_measurement_decode_sib(uint8_t * data, uint32_t n);
 static void cell_measurement_decode_sib1(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_1_STRUCT * sib1);
 static void cell_measurement_decode_sib2(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_2_STRUCT * sib2);
-
+static void cell_measurement_decode_sib3(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_3_STRUCT * sib3);
+static void cell_measurement_decode_sib4(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_4_STRUCT * sib4);
+static void cell_measurement_decode_sib5(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_5_STRUCT * sib5);
+static void cell_measurement_decode_sib6(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_6_STRUCT * sib6);
+static void cell_measurement_decode_sib7(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_7_STRUCT * sib7);
+static void cell_measurement_decode_sib8(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_8_STRUCT * sib8);
+static void cell_measurement_decode_sib9(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_9_STRUCT * sib9);
+static void cell_measurement_decode_sib13(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_13_STRUCT * sib13);
 
 
 /**********************************************************************
@@ -338,14 +345,15 @@ int main(int argc, char **argv) {
       fprintf(stderr, "Error calling srslte_ue_sync_work()\n");
     }
 
-    uint32 sfnsf = sfn * 10 + srslte_ue_sync_get_sfidx(&ue_sync);
-    bool sib1_sf = srslte_ue_sync_get_sfidx(&ue_sync) == 5 && (sfn % 2) == 0;
+    uint32 sf = srslte_ue_sync_get_sfidx(&ue_sync);
+    uint32 sfnsf = (sfn * 10) + sf;
+    bool sib1_sf = (sf == 5) && ((sfn % 2) == 0);
 
     /* srslte_ue_sync_get_buffer returns 1 if successfully read 1 aligned subframe */
     if (ret == 1) {
       switch (state) {
         case DECODE_MIB:
-          if (srslte_ue_sync_get_sfidx(&ue_sync) == 0) {
+          if (sf == 0) {
             srslte_pbch_decode_reset(&ue_mib.pbch);
             n = srslte_ue_mib_decode(&ue_mib, sf_buffer[0], bch_payload, NULL, &sfn_offset);
             if (n < 0) {
@@ -371,7 +379,7 @@ int main(int argc, char **argv) {
 
               if(sib_bmp & (1 << LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_1))
               {
-                printf("SIB1 RXd=%04x RQd=%04x\n", sibs_rxd, sibs_rqd);
+                printf("SFN=%d SF=%d SIB1 RXd=%04x RQd=%04x\n", sfn, sf, sibs_rxd, sibs_rqd);
                 state = DECODE_SIBX;
               }
             }
@@ -385,68 +393,68 @@ int main(int argc, char **argv) {
             if (n > 0)
             {
               sibs_rxd |= (sib_bmp);
-              printf("SIBx RXd=%04x RQd=%04x\n", sibs_rxd, sibs_rqd);
+              printf("SFN=%d SF=%d SIBx RXd=%04x RQd=%04x\n", sfn, sf,sibs_rxd, sibs_rqd);
               if((sibs_rxd & sibs_rqd) == sibs_rqd)
                 state = MEASURE;
             }
           }
           break;
-      case MEASURE:
-        if (srslte_ue_sync_get_sfidx(&ue_sync) == 5 || (sfn%128) == 127) {
-          /* Run FFT for all subframe data */
-          srslte_ofdm_rx_sf(&fft, sf_buffer[0], sf_symbols);
-          
-          srslte_chest_dl_estimate(&chest, sf_symbols, ce, srslte_ue_sync_get_sfidx(&ue_sync));
-                  
-          rssi = SRSLTE_VEC_EMA(srslte_vec_avg_power_cf(sf_buffer[0],SRSLTE_SF_LEN(srslte_symbol_sz(cell.nof_prb))),rssi,0.05);
-          rssi_utra = SRSLTE_VEC_EMA(srslte_chest_dl_get_rssi(&chest),rssi_utra,0.05);
-          rsrq = SRSLTE_VEC_EMA(srslte_chest_dl_get_rsrq(&chest),rsrq,0.05);
-          rsrp = SRSLTE_VEC_EMA(srslte_chest_dl_get_rsrp(&chest),rsrp,0.05);      
-          snr = SRSLTE_VEC_EMA(srslte_chest_dl_get_snr(&chest),snr,0.05);      
-          
-          nframes++;          
+        case MEASURE:
+          if (sf == 5 || (sfn % 128) == 127) {
+            /* Run FFT for all subframe data */
+            srslte_ofdm_rx_sf(&fft, sf_buffer[0], sf_symbols);
+            
+            srslte_chest_dl_estimate(&chest, sf_symbols, ce, sf);
+                    
+            rssi = SRSLTE_VEC_EMA(srslte_vec_avg_power_cf(sf_buffer[0],SRSLTE_SF_LEN(srslte_symbol_sz(cell.nof_prb))),rssi,0.05);
+            rssi_utra = SRSLTE_VEC_EMA(srslte_chest_dl_get_rssi(&chest),rssi_utra,0.05);
+            rsrq = SRSLTE_VEC_EMA(srslte_chest_dl_get_rsrq(&chest),rsrq,0.05);
+            rsrp = SRSLTE_VEC_EMA(srslte_chest_dl_get_rsrp(&chest),rsrp,0.05);      
+            snr = SRSLTE_VEC_EMA(srslte_chest_dl_get_snr(&chest),snr,0.05);      
+            
+            nframes++;          
 
-          if (crs && ((sfn % 128) == 127))
-          {
-            int qq = 0;
-            fprintf(crs, "[ID=%d SFN=%d SF=%d NPRB=%d Nports=%d CP=%d PHICHlen=%d PHICHres=%d]\n", 
-                      ue_sync.cell.id, sfn, srslte_ue_sync_get_sfidx(&ue_sync), 
-                      ue_sync.cell.nof_prb, ue_sync.cell.nof_ports, ue_sync.cell.cp, 
-                      ue_sync.cell.phich_length, ue_sync.cell.phich_resources);
-          
-            for(qq = 0; qq< 120; ++qq)
+            if (crs && ((sfn % 128) == 127))
             {
-              fprintf(crs, "%f, %f\n", crealf(chest.pilot_recv_signal[qq]), cimagf(chest.pilot_recv_signal[qq]));
+              int qq = 0;
+              fprintf(crs, "[ID=%d SFN=%d SF=%d NPRB=%d Nports=%d CP=%d PHICHlen=%d PHICHres=%d]\n", 
+                        ue_sync.cell.id, sfn, sf, 
+                        ue_sync.cell.nof_prb, ue_sync.cell.nof_ports, ue_sync.cell.cp, 
+                        ue_sync.cell.phich_length, ue_sync.cell.phich_resources);
+            
+              for(qq = 0; qq< 120; ++qq)
+              {
+                fprintf(crs, "%f, %f\n", crealf(chest.pilot_recv_signal[qq]), cimagf(chest.pilot_recv_signal[qq]));
+              }
+              fprintf(crs, "\n");
             }
-            fprintf(crs, "\n");
-          }
-        } 
+          } 
 
-        if ((nframes%100) == 0 || rx_gain_offset == 0) {
-          if (srslte_rf_has_rssi(&rf)) {
-            rx_gain_offset = 10*log10(rssi*1000)-srslte_rf_get_rssi(&rf);
-          } else {
-            rx_gain_offset = srslte_rf_get_rx_gain(&rf);            
+          if ((nframes%100) == 0 || rx_gain_offset == 0) {
+            if (srslte_rf_has_rssi(&rf)) {
+              rx_gain_offset = 10*log10(rssi*1000)-srslte_rf_get_rssi(&rf);
+            } else {
+              rx_gain_offset = srslte_rf_get_rx_gain(&rf);            
+            }
           }
-        }
-        
-        // Plot and Printf
-        if ((nframes%10) == 0) {
+          
+          // Plot and Printf
+          if ((nframes%10) == 0) {
 
-          printf("CFO: %+8.4f kHz, SFO: %+8.4f Hz, RSSI: %5.1f dBm, RSSI/ref-symbol: %+5.1f dBm, "
-                 "RSRP: %+5.1f dBm, RSRQ: %5.1f dB, SNR: %5.1f dB\r",
-                srslte_ue_sync_get_cfo(&ue_sync)/1000, srslte_ue_sync_get_sfo(&ue_sync), 
-                10*log10(rssi*1000) - rx_gain_offset,                        
-                10*log10(rssi_utra*1000)- rx_gain_offset, 
-                10*log10(rsrp*1000) - rx_gain_offset, 
-                10*log10(rsrq), 10*log10(snr));                
-          if (srslte_verbose != SRSLTE_VERBOSE_NONE) {
-            printf("\n");
+            printf("CFO: %+8.4f kHz, SFO: %+8.4f Hz, RSSI: %5.1f dBm, RSSI/ref-symbol: %+5.1f dBm, "
+                   "RSRP: %+5.1f dBm, RSRQ: %5.1f dB, SNR: %5.1f dB\r",
+                  srslte_ue_sync_get_cfo(&ue_sync)/1000, srslte_ue_sync_get_sfo(&ue_sync), 
+                  10*log10(rssi*1000) - rx_gain_offset,                        
+                  10*log10(rssi_utra*1000)- rx_gain_offset, 
+                  10*log10(rsrp*1000) - rx_gain_offset, 
+                  10*log10(rsrq), 10*log10(snr));                
+            if (srslte_verbose != SRSLTE_VERBOSE_NONE) {
+              printf("\n");
+            }
           }
-        }
-        break;
+          break;
       }
-      if (srslte_ue_sync_get_sfidx(&ue_sync) == 9) {
+      if (sf == 9) {
         sfn++; 
         if (sfn == 1024) {
           sfn = 0; 
@@ -457,8 +465,7 @@ int main(int argc, char **argv) {
         srslte_sync_get_peak_value(&ue_sync.sfind), 
         ue_sync.frame_total_cnt, ue_sync.state);      
     }
-   
-        
+
     sf_cnt++;                  
   } // Main loop
 
@@ -543,19 +550,29 @@ cell_measurement_decode_sib(uint8_t * data, uint32_t n)
           cell_measurement_decode_sib2(&dlsch_msg.sibs[i].sib.sib2);
           break;
         case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_3:
-        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_4:
-        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_5:
-        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_6:
-        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_7:
-        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_8:
-        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_9:
-        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_10:
-        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_11:
-        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_12:
-        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_13:
-          printf("WARNING: Unsupported SIB type %s\n", liblte_rrc_sib_type_text[dlsch_msg.sibs[i].sib_type]);
+          cell_measurement_decode_sib3(&dlsch_msg.sibs[i].sib.sib3);
           break;
-    
+        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_4:
+          cell_measurement_decode_sib4(&dlsch_msg.sibs[i].sib.sib4);
+          break;
+        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_5:
+          cell_measurement_decode_sib5(&dlsch_msg.sibs[i].sib.sib5);
+          break;
+        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_6:
+          cell_measurement_decode_sib6(&dlsch_msg.sibs[i].sib.sib6);
+          break;
+        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_7:
+          cell_measurement_decode_sib7(&dlsch_msg.sibs[i].sib.sib7);
+          break;
+        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_8:
+          cell_measurement_decode_sib8(&dlsch_msg.sibs[i].sib.sib8);
+          break;
+        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_9:
+          cell_measurement_decode_sib9(&dlsch_msg.sibs[i].sib.sib9);
+          break;
+        case LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_13:
+          cell_measurement_decode_sib13(&dlsch_msg.sibs[i].sib.sib13);
+          break;
         default:
           printf("ERROR: Unknown SIB type %s\n", liblte_rrc_sib_type_text[dlsch_msg.sibs[i].sib_type]);
           exit(1);
@@ -568,7 +585,6 @@ cell_measurement_decode_sib(uint8_t * data, uint32_t n)
     exit(1);
   }
   
-
   return (uint32) sib_type_bmp;
 }
 
@@ -724,6 +740,110 @@ cell_measurement_decode_sib2(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_2_STRUCT * sib
 
   printf("----------------------------------------------------------\n");
 }
+
+static void cell_measurement_decode_sib3(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_3_STRUCT * sib3)
+{
+  printf("----------------------------------------------------------\n");
+  printf("SIB3 received: \n");
+  printf("<Needs decoder>\n");
+  printf("----------------------------------------------------------\n");
+}
+
+static void cell_measurement_decode_sib4(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_4_STRUCT * sib4)
+{
+  printf("----------------------------------------------------------\n");
+  printf("SIB4 received: \n");
+  printf("CSG Range Present=%d Intra-NeighbourSize=%d Intra-BlacklistSize=%d\n", sib4->csg_phys_cell_id_range_present, sib4->intra_freq_neigh_cell_list_size, sib4->intra_freq_black_cell_list_size);
+  printf("----------------------------------------------------------\n");
+}
+
+static void cell_measurement_decode_sib5(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_5_STRUCT * sib5)
+{
+  printf("----------------------------------------------------------\n");
+  printf("SIB5 received: \n");
+  printf("Inter-FreqCarrierSize=%d\n", sib5->inter_freq_carrier_freq_list_size);
+
+  for (uint32 i = 0; i < sib5->inter_freq_carrier_freq_list_size; ++i)
+  {
+    printf("[%d] Freq=%d AntPort1=%d QRxlevMin=%d TReselEutra=%d ThreshLow=%d ThreshHigh=%d NcellCfg=%d\n", 
+      i,
+      sib5->inter_freq_carrier_freq_list[i].dl_carrier_freq, 
+      sib5->inter_freq_carrier_freq_list[i].presence_ant_port_1,
+      sib5->inter_freq_carrier_freq_list[i].q_rx_lev_min,
+      sib5->inter_freq_carrier_freq_list[i].t_resel_eutra,
+      sib5->inter_freq_carrier_freq_list[i].threshx_low,
+      sib5->inter_freq_carrier_freq_list[i].threshx_high,
+      sib5->inter_freq_carrier_freq_list[i].neigh_cell_cnfg);
+
+    printf("[%d] AllowedMeasBw=%s QoffsetFreq=%s InterCellList=%d InterBlackList=%d\n",
+      i,
+      liblte_rrc_allowed_meas_bandwidth_text[sib5->inter_freq_carrier_freq_list[i].allowed_meas_bw],
+      liblte_rrc_q_offset_range_text[sib5->inter_freq_carrier_freq_list[i].q_offset_freq],
+      sib5->inter_freq_carrier_freq_list[i].inter_freq_neigh_cell_list_size,
+      sib5->inter_freq_carrier_freq_list[i].inter_freq_black_cell_list_size);
+
+    if(sib5->inter_freq_carrier_freq_list[i].p_max_present)
+      printf("[%d] Pmax=%d\n",
+        i, 
+        sib5->inter_freq_carrier_freq_list[i].p_max);
+
+    if(sib5->inter_freq_carrier_freq_list[i].t_resel_eutra_sf_present)
+      printf("[%d] TreselectEutraSfMed=%s TreselectEutraSfHigh=%s\n", 
+        i,
+        liblte_rrc_sssf_medium_text[sib5->inter_freq_carrier_freq_list[i].t_resel_eutra_sf.sf_medium],
+        liblte_rrc_sssf_high_text[sib5->inter_freq_carrier_freq_list[i].t_resel_eutra_sf.sf_high]);
+
+    if(sib5->inter_freq_carrier_freq_list[i].cell_resel_prio_present)
+      printf("[%d] CellReselPrio=%d\n", 
+        i,
+        sib5->inter_freq_carrier_freq_list[i].cell_resel_prio);
+
+  }
+  
+  
+  printf("----------------------------------------------------------\n");
+}
+
+static void cell_measurement_decode_sib6(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_6_STRUCT * sib6)
+{
+  printf("----------------------------------------------------------\n");
+  printf("SIB6 received: \n");
+  printf("<Needs decoder>\n");
+  printf("----------------------------------------------------------\n");
+}
+
+static void cell_measurement_decode_sib7(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_7_STRUCT * sib7)
+{
+  printf("----------------------------------------------------------\n");
+  printf("SIB7 received: \n");
+  printf("<Needs decoder>\n");
+  printf("----------------------------------------------------------\n");
+}
+
+static void cell_measurement_decode_sib8(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_8_STRUCT * sib8)
+{
+  printf("----------------------------------------------------------\n");
+  printf("SIB8 received: \n");
+  printf("<Needs decoder>\n");
+  printf("----------------------------------------------------------\n");
+}
+
+static void cell_measurement_decode_sib9(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_9_STRUCT * sib9)
+{
+  printf("----------------------------------------------------------\n");
+  printf("SIB9 received: \n");
+  printf("<Needs decoder>\n");
+  printf("----------------------------------------------------------\n");
+}
+
+static void cell_measurement_decode_sib13(const LIBLTE_RRC_SYS_INFO_BLOCK_TYPE_13_STRUCT * sib13)
+{
+  printf("----------------------------------------------------------\n");
+  printf("SIB13 received: \n");
+  printf("<Needs decoder>\n");
+  printf("----------------------------------------------------------\n");
+}
+
 
 
 
